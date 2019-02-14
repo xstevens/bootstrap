@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------------------------------------------------------
 
 # Specify the Kubernetes version to use.
-KUBERNETES_VERSION="1.10.11"
+KUBERNETES_VERSION="1.13.3"
 KUBERNETES_CNI="0.6.0"
 
 curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
@@ -44,38 +44,50 @@ TOKEN=$(cat /etc/kubicorn/cluster.json | jq -r '.clusterAPI.spec.providerConfig'
 PORT=$(cat /etc/kubicorn/cluster.json | jq -r '.clusterAPI.spec.providerConfig' | jq -r '.values.itemMap.INJECTEDPORT | tonumber')
 
 # Necessary for joining a cluster with AWS information
-HOSTNAME=$(hostname -f)
+HOSTNAME=$(curl -sS http://169.254.169.254/latest/meta-data/local-hostname)
 
 cat << EOF  > "/etc/kubicorn/kubeadm-config.yaml"
-apiVersion: kubeadm.k8s.io/v1alpha1
-kind: MasterConfiguration
-cloudProvider: aws
-token: ${TOKEN}
-kubernetesVersion: ${KUBERNETES_VERSION}
-nodeName: ${HOSTNAME}
-api:
-  advertiseAddress: ${PUBLICIP}
+apiVersion: kubeadm.k8s.io/v1beta1
+kind: InitConfiguration
+bootstrapTokens:
+- token: "${TOKEN}"
+  description: "kubeadm bootstrap token"
+  ttl: "24h"
+nodeRegistration:
+  name: "${HOSTNAME}"
+localAPIEndpoint:
+  advertiseAddress: "0.0.0.0"
   bindPort: ${PORT}
-apiServerCertSANs:
-- ${PUBLICIP}
-- ${HOSTNAME}
-- ${PRIVATEIP}
-authorizationModes:
-- Node
-- RBAC
+---
+apiVersion: kubeadm.k8s.io/v1beta1
+kind: ClusterConfiguration
+kubernetesVersion: "${KUBERNETES_VERSION}"
+apiServer:
+  extraArgs:
+    authorization-mode: "Node,RBAC"
+  certSANs:
+    - "${PUBLICIP}"
+    - "${HOSTNAME}"
+    - "${PRIVATEIP}"
+networking:
+  podSubnet: "192.168.0.0/16"
 EOF
 
-kubeadm reset
+kubeadm reset -f
 kubeadm init --config /etc/kubicorn/kubeadm-config.yaml
 
-# Thanks Kelsey :)
+# install Calico
 kubectl apply \
-  -f http://docs.projectcalico.org/v2.3/getting-started/kubernetes/installation/hosted/kubeadm/1.6/calico.yaml \
-  --kubeconfig /etc/kubernetes/admin.conf
-
-kubectl apply \
-    -f  https://raw.githubusercontent.com/kubernetes/kubernetes/release-1.8/cluster/addons/storage-class/aws/default.yaml \
+    -f https://docs.projectcalico.org/v3.3/getting-started/kubernetes/installation/hosted/rbac-kdd.yaml \
     --kubeconfig /etc/kubernetes/admin.conf
+kubectl apply \
+    -f https://docs.projectcalico.org/v3.3/getting-started/kubernetes/installation/hosted/kubernetes-datastore/calico-networking/1.7/calico.yaml \
+    --kubeconfig /etc/kubernetes/admin.conf
+
+# install AWS storage class
+kubectl apply \
+   -f  https://raw.githubusercontent.com/kubernetes/kubernetes/release-1.13/cluster/addons/storage-class/aws/default.yaml \
+   --kubeconfig /etc/kubernetes/admin.conf
 
 mkdir -p /home/ubuntu/.kube
 cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config

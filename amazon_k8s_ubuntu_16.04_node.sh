@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------------------------------------------------------
 
 # Specify the Kubernetes version to use.
-KUBERNETES_VERSION="1.10.4"
+KUBERNETES_VERSION="1.13.3"
 KUBERNETES_CNI="0.6.0"
 
 # Controls delay before attempting to join the master
@@ -47,10 +47,10 @@ systemctl daemon-reload
 systemctl restart kubelet.service
 
 # Necessary for joining a cluster with the AWS information
-HOSTNAME=$(hostname -f)
+HOSTNAME=$(curl -sS http://169.254.169.254/latest/meta-data/local-hostname)
 
 # Reset before joining
-kubeadm reset
+kubeadm reset -f
 
 # Delay kubeadm join until master is ready
 attempts=0
@@ -67,5 +67,5 @@ if [ "${response}" -ne "200" ]; then
   exit 1
 else
   echo "Master seems to be up and running. Joining the node to the cluster..."
-  kubeadm join --node-name "${HOSTNAME}" --token "${TOKEN}" "${MASTER}" --discovery-token-unsafe-skip-ca-verification
+  kubeadm join "${MASTER}" --token "${TOKEN}" --node-name "${HOSTNAME}" --discovery-token-unsafe-skip-ca-verification
 fi
